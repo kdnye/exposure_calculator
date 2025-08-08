@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "exposure-pwa",
   "version": "1.0.0",
   "private": true,
@@ -15,5 +15,21 @@
     "@capacitor/android": "^6.1.2",
     "@capacitor/cli": "^6.1.2",
     "@capacitor/core": "^6.1.2"
-  }
+  },
+  "description": "",
+  "main": "app.js",
+  "directories": {
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kdnye/exposure_calculator.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kdnye/exposure_calculator/issues"
+  },
+  "homepage": "https://github.com/kdnye/exposure_calculator#readme"
 }
