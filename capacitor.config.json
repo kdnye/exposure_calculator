@@ -1,6 +1,6 @@
-﻿{
+{
   "appId": "com.fsi.exposure",
-  "appName": "Exposure Calculator",
+  "appName": "Film Exposure",
   "webDir": "dist",
   "bundledWebRuntime": false
 }

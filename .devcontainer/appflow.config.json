@@ -1,0 +1,11 @@
+{
+  "apps": [
+    {
+      "appId": "<your Appflow app id>",
+      "root": ".",
+      "webBuildCommand": "npm run build",
+      "webBuildDir": "dist",
+      "androidPath": "android"
+    }
+  ]
+}
