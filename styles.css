@@ -1,19 +1,52 @@
 :root { --bg:#111; --fg:#eee; --card:#1b1b1b; --muted:#aaa; }
+
+/* ADDED: keep everything inside the viewport */
+html, body { margin:0; padding:0; width:100%; overflow-x:hidden; }
+
 * { box-sizing: border-box; font-family: system-ui, sans-serif; }
 body { margin:0; background:var(--bg); color:var(--fg); }
+
+/* UPDATED: make the app clamp to phone width instead of stretching */
 header { padding:16px 20px; border-bottom:1px solid #222; }
-main { padding:16px; display:grid; gap:16px; max-width:900px; margin:0 auto; }
+main {
+  padding:16px;
+  display:grid;
+  gap:16px;
+  width:100%;                                /* NEW */
+  max-width: clamp(320px, 96vw, 560px);      /* NEW: pick a max you like */
+  margin:0 auto;
+}
+
 .card { background:var(--card); padding:16px; border-radius:10px; }
-.grid { display:grid; gap:10px; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); }
+
+/* UPDATED: let tiles shrink further on small screens */
+.grid {
+  display:grid;
+  gap:10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); /* was 180px */
+}
+
+/* still available when you explicitly want two equal columns */
 .grid.two { grid-template-columns: 1fr 1fr; gap:16px; }
+
 label { display:flex; flex-direction:column; gap:6px; font-size:14px; }
-input, select, button { padding:10px; border-radius:8px; border:1px solid #333; background:#000; color:#fff; }
+
+/* ADDED: full-width controls on narrow screens */
+input, select, button { width:100%; min-width:0; padding:10px; border-radius:8px; border:1px solid #333; background:#000; color:#fff; }
+
 button { cursor:pointer; }
-pre { background:#000; padding:10px; border-radius:8px; overflow:auto; }
+
+/* UPDATED: prevent horizontal scroll from long lines */
+pre { background:#000; padding:10px; border-radius:8px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+
 .hint { color:var(--muted); margin:0 0 8px 0; }
 
 /* ---- Zone bar ---- */
 .zonebar { margin-top:10px; }
+
+/* ADDED: make the bar respect container width */
+.zonebar, .zonebar-track, .zonebar-evs { width:100%; }
+
 .zonebar-track {
   position: relative;
   display: grid;
@@ -24,6 +57,7 @@ pre { background:#000; padding:10px; border-radius:8px; overflow:auto; }
   overflow: hidden;
   user-select: none;
 }
+
 .zone-seg {
   display: flex;
   align-items: center;
@@ -31,6 +65,12 @@ pre { background:#000; padding:10px; border-radius:8px; overflow:auto; }
   font-weight: 600;
   border-right: 1px solid #222;
 }
+
+/* Optional: slightly smaller labels on tiny screens */
+@media (max-width: 380px) {
+  .zone-seg { font-size: 0.85rem; }
+}
+
 .zone-seg:nth-child(1)  { background: #000000; color:#fff; }
 .zone-seg:nth-child(2)  { background: #1b1b1b; color:#fff; }
 .zone-seg:nth-child(3)  { background: #303030; color:#fff; }
@@ -63,4 +103,9 @@ pre { background:#000; padding:10px; border-radius:8px; overflow:auto; }
   font-size: 12px;
   color: #ccc;
   text-align: center;
+}
+
+/* ADDED: media tweak to force single column if it still feels cramped */
+@media (max-width: 420px) {
+  .grid { grid-template-columns: 1fr; }
 }
