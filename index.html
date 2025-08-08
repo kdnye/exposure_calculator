@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#111">
+  <title>Exposure Calculator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header><h1>📸 Exposure Calculator (Offline)</h1></header>
+
+  <main>
+    <!-- Global Adjustments -->
+    <section class="card">
+      <h2>Global Adjustments</h2>
+      <div class="grid">
+        <label>Filter Factor (×)
+          <input id="ff_factor" type="number" step="0.1" min="1" value="1">
+        </label>
+        <label>ND / Filter Stops (stops)
+          <input id="ff_stops" type="number" step="0.1" value="0">
+        </label>
+        <label>Reciprocity Model
+          <select id="rec_model">
+            <option value="none">None</option>
+            <option value="generic">Generic</option>
+            <option value="hp5">Ilford HP5+</option>
+            <option value="trix">Kodak Tri‑X 400</option>
+            <option value="acros2">Fujifilm Acros II</option>
+            <option value="custom">Custom (set points)</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid">
+        <label>Custom @ 1s (stops) <input id="rec_c1" type="number" step="0.1" value="1.0"></label>
+        <label>Custom @ 10s (stops) <input id="rec_c10" type="number" step="0.1" value="2.0"></label>
+        <label>Custom @ 100s (stops) <input id="rec_c100" type="number" step="0.1" value="3.5"></label>
+      </div>
+      <p class="hint">Filter factor adds exposure (stops = log₂(factor)). Reciprocity adds extra stops for long exposures. Both reduce effective EV.</p>
+    </section>
+
+    <!-- Manual (any two → solve the others) -->
+    <section class="card">
+      <h2>Manual</h2>
+      <div class="grid">
+        <label>ISO <input id="iso" type="number" min="1" value="100"></label>
+        <label>Aperture (f) <input id="ap" type="number" step="0.1" value="8"></label>
+        <label>Shutter (s) <input id="tv" type="number" step="0.0001" value="0.01"></label>
+        <label>EV100 <input id="ev" type="number" step="0.1"></label>
+      </div>
+      <p class="hint">Enter any two fields; click “Solve”.</p>
+      <button id="solveManual">Solve</button>
+      <pre id="manualOut"></pre>
+    </section>
+
+    <!-- Sunny 16 -->
+    <section class="card">
+      <h2>Sunny 16 Guide</h2>
+      <label>ISO <input id="s16_iso" type="number" min="1" value="100"></label>
+      <label>Light
+        <select id="s16_cond">
+          <option>Bright Sun</option>
+          <option>Hazy Sun</option>
+          <option>Open Shade</option>
+          <option>Heavy Overcast</option>
+          <option>Indoors (bright)</option>
+        </select>
+      </label>
+      <button id="s16_calc">Suggest</button>
+      <pre id="s16Out"></pre>
+    </section>
+
+    <!-- ISO conversion -->
+    <section class="card">
+      <h2>ISO Conversion</h2>
+      <div class="grid">
+        <label>Metered ISO <input id="conv_iso_a" type="number" value="100"></label>
+        <label>f/ <input id="conv_ap" type="number" step="0.1" value="8"></label>
+        <label>t (s) <input id="conv_tv" type="number" step="0.0001" value="0.01"></label>
+        <label>Target ISO <input id="conv_iso_b" type="number" value="400"></label>
+      </div>
+      <button id="conv_calc">Convert</button>
+      <pre id="convOut"></pre>
+    </section>
+
+    <!-- Zone System slide-rule -->
+    <section class="card">
+      <h2>Zone System</h2>
+      <div class="grid">
+        <label>ISO <input id="zone_iso" type="number" value="100"></label>
+        <label>Lock
+          <select id="zone_lock">
+            <option value="ap">Aperture Priority (lock f/)</option>
+            <option value="tv">Shutter Priority (lock t)</option>
+          </select>
+        </label>
+        <label>f/ <input id="zone_ap" type="number" step="0.1" value="8"></label>
+        <label>t (s) <input id="zone_tv" type="number" step="0.0001" value="0.01"></label>
+      </div>
+      <div class="grid">
+        <label>Zone V EV (ISO 100)
+          <input id="zone_ev_number" type="number" step="0.1" value="12">
+        </label>
+        <label>Slide V (middle gray)
+          <input id="zone_ev" type="range" min="3" max="18" step="0.1" value="12">
+        </label>
+      </div>
+      <div class="zonebar" id="zonebar">
+        <div class="zonebar-track" id="zonebarTrack">
+          <div class="zone-seg">0</div><div class="zone-seg">I</div><div class="zone-seg">II</div>
+          <div class="zone-seg">III</div><div class="zone-seg">IV</div><div class="zone-seg">V</div>
+          <div class="zone-seg">VI</div><div class="zone-seg">VII</div><div class="zone-seg">VIII</div>
+          <div class="zone-seg">IX</div><div class="zone-seg">X</div>
+          <div class="zone-thumb" id="zoneThumb" title="Drag to shift EV (Zone V)"></div>
+        </div>
+        <div class="zonebar-evs" id="zonebarEVs"></div>
+      </div>
+      <pre id="zoneOut"></pre>
+    </section>
+
+    <!-- Converter (left → right) -->
+    <section class="card">
+      <h2>Converter</h2>
+      <div class="grid two">
+        <fieldset>
+          <legend>Left (Baseline)</legend>
+          <label>ISO <input id="left_iso" type="number" value="100"></label>
+          <label>f/ <input id="left_ap" type="number" step="0.1" value="8"></label>
+          <label>t (s) <input id="left_tv" type="number" step="0.0001" value="0.01"></label>
+        </fieldset>
+        <fieldset>
+          <legend>Right (Adjusted)</legend>
+          <label>ISO <input id="right_iso" type="number" value="400"></label>
+          <div>
+            <button id="btn_ap_pri">Aperture Priority</button>
+            <button id="btn_tv_pri">Shutter Priority</button>
+          </div>
+          <label>f/ <input id="right_ap" type="number" step="0.1" value="8"></label>
+          <label>t (s) <input id="right_tv" type="number" step="0.0001" value="0.01"></label>
+        </fieldset>
+      </div>
+      <button id="convert">Convert</button>
+      <pre id="conv2Out"></pre>
+    </section>
+
+    <!-- Live Meter (camera) – dev module (OFF by default) -->
+    <section class="card" id="liveMeterCard" hidden>
+      <h2>Live Meter (Camera)</h2>
+      <div class="grid">
+        <button id="meter_start">Start Meter</button>
+        <button id="meter_calib">Calibrate (Zone V)</button>
+        <button id="meter_stop">Stop</button>
+      </div>
+      <div class="grid">
+        <label>Cal EV100 (at calibration)
+          <input id="meter_ev_cal" type="number" step="0.1" value="10.0">
+        </label>
+        <label>Use Live EV Globally
+          <input id="meter_use_global" type="checkbox">
+        </label>
+      </div>
+      <p class="hint">Point at 18% gray and press Calibrate. EV is relative to that.</p>
+      <div>EV100 Live: <strong id="meter_ev100">—</strong></div>
+      <div>EV@ISO: <strong id="meter_ev_iso">—</strong></div>
+      <video id="meter_video" autoplay playsinline style="display:none;"></video>
+      <canvas id="meter_canvas" width="160" height="120" style="display:none;"></canvas>
+    </section>
+  </main>
+
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+  <!-- dev/optional: <script type="module" src="modules/live_meter.js"></script> -->
+</body>
+</html>

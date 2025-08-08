@@ -1,0 +1,6 @@
+{
+  "appId": "com.fsi.exposure",
+  "appName": "Film Exposure",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
