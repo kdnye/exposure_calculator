@@ -1,0 +1,14 @@
+{
+  "name": "exposure-pwa",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "zip": "bash -lc \"zip -r exposure-pwa.zip index.html app.js styles.css manifest.webmanifest sw.js storage.js modules tests vitest.config.js package.json\""
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  }
+}
