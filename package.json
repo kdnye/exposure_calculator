@@ -1,14 +1,24 @@
-{
+﻿{
   "name": "exposure-pwa",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "http-server -p 5173 -c-1 .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "zip": "bash -lc \"zip -r exposure-pwa.zip index.html app.js styles.css manifest.webmanifest sw.js storage.js modules tests vitest.config.js package.json\""
+    "zip": "powershell -NoProfile -Command \"Compress-Archive -Force -Path index.html,app.js,styles.css,manifest.webmanifest,sw.js,storage.js,modules,tests,vitest.config.js,package.json -DestinationPath exposure-pwa.zip\""
+        "android:sync": "npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:build": "cd android && ./gradlew assembleRelease",
+    "android:bundle": "cd android && ./gradlew bundleRelease"
   },
   "devDependencies": {
+    "http-server": "^14.1.1",
     "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@capacitor/cli": "^7.4.2",
+    "@capacitor/core": "^7.4.2"
   }
 }
