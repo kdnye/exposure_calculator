@@ -169,8 +169,11 @@
     </section>
   </main>
 
-  <script src="storage.js"></script>
-  <script src="app.js"></script>
-  <!-- dev/optional: <script type="module" src="modules/live_meter.js"></script> -->
+  <script type="module">
+    import './storage.js';
+    import './app.js';
+    // Optional live meter: uncomment to enable camera-based metering UI.
+    // import './modules/live_meter.js';
+  </script>
 </body>
 </html>
