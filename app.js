@@ -263,7 +263,12 @@ function initZoneBar() {
   $('#zone_iso').oninput = () => applyZoneExposure(num('#zone_ev'));
 
   let dragging = false;
-  const onPointerDown = (e) => { dragging = true; zoneThumb.setPointerCapture?.(e.pointerId); };
+  const onPointerDown = (e) => {
+    dragging = true;
+    if (zoneThumb.setPointerCapture) {
+      zoneThumb.setPointerCapture(e.pointerId);
+    }
+  };
   const onPointerMove = (e) => {
     if (!dragging) return;
     const rect = zoneTrack.getBoundingClientRect();
