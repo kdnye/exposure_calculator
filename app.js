@@ -174,7 +174,13 @@ function solveManual() {
     const EV100 = ev100From(ap, tv);
     const EVISO = evISO(EV100, ISO);
     out('#manualOut', `EV100=${EV100.toFixed(2)} | EV(ISO ${ISO})=${EVISO.toFixed(2)}\nKeeps: f/${ap}, t=${fmtTime(tv)}`);
-    setIfEmpty('#ev', EV100.toFixed(2));
+    const evEl = $('#ev');
+    let mutated = false;
+    if (evEl && !evEl.value) {
+      evEl.value = EV100.toFixed(2);
+      mutated = true;
+    }
+    if (mutated) saveState();
     return;
   }
 
@@ -182,16 +188,34 @@ function solveManual() {
     const EV100 = ev;
     if (!isNaN(ap) && isNaN(tv)) {
       const t = tvFromGlobal(ap, EV100);
-      set('#tv', t);
+      const tvEl = $('#tv');
+      let mutated = false;
+      if (tvEl) {
+        const newValue = `${t}`;
+        if (tvEl.value !== newValue) {
+          tvEl.value = newValue;
+          mutated = true;
+        }
+      }
       const EVISO = evISO(EV100, ISO);
       out('#manualOut', `Solved t=${fmtTime(t)} | EV(ISO ${ISO})=${EVISO.toFixed(2)}`);
+      if (mutated) saveState();
       return;
     }
     if (isNaN(ap) && !isNaN(tv)) {
       const N = avFromGlobal(tv, EV100);
-      set('#ap', N);
+      const apEl = $('#ap');
+      let mutated = false;
+      if (apEl) {
+        const newValue = `${N}`;
+        if (apEl.value !== newValue) {
+          apEl.value = newValue;
+          mutated = true;
+        }
+      }
       const EVISO = evISO(EV100, ISO);
       out('#manualOut', `Solved f/${N.toFixed(2)} | EV(ISO ${ISO})=${EVISO.toFixed(2)}`);
+      if (mutated) saveState();
       return;
     }
   }
@@ -397,3 +421,5 @@ initZoneBar();
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js');
 }
+
+export { solveManual, saveState };
