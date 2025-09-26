@@ -1,5 +1,17 @@
-// ===== Core math =====
-const log2 = x => Math.log(x)/Math.log(2);
+/**
+ * Exposure calculation helpers.
+ *
+ * The calculator revolves around EV100 (exposure value at ISO 100). Everything else –
+ * shutter speed, aperture, ISO conversions – is derived from these logarithmic
+ * relationships. Documenting the identities here keeps the rest of the file readable.
+ */
+
+/**
+ * Calculate log₂ with a small fallback for environments that lack Math.log2 (e.g. very old Android WebViews).
+ * @param {number} value
+ * @returns {number}
+ */
+const log2 = (value) => (Math.log2 ? Math.log2(value) : Math.log(value) / Math.LN2);
 
 // EV100 = log2(N^2 / t)
 function ev100From(N, t){ return log2((N*N)/t); }
@@ -11,6 +23,7 @@ function evISO(ev100, ISO){ return ev100 + log2(ISO/100); }
 function ev100FromISO(evISOval, ISO){ return evISOval - log2(ISO/100); }
 
 // Sunny 16 presets (approx)
+/** Sunny 16 presets (approximate suggested aperture + EV offsets). */
 const s16 = {
   "Bright Sun": { f: 16, shiftEV: 0 },
   "Hazy Sun": { f: 16, shiftEV: -0.5 },
@@ -20,6 +33,12 @@ const s16 = {
 };
 
 // ===== Global Adjustments (Filter & Reciprocity) =====
+/**
+ * Resolve the filter correction in stops.
+ *
+ * Users can enter either a multiplication factor or explicit stop adjustment. Whichever
+ * field they edit last is echoed into the other so both remain in sync.
+ */
 function filterStops() {
   const ff = parseFloat($('#ff_factor').value) || 1;
   const fs = parseFloat($('#ff_stops').value);
@@ -30,6 +49,11 @@ function filterStops() {
   return finalStops;
 }
 
+/**
+ * Calculate reciprocity failure compensation in stops for the selected model.
+ * @param {number} t - Exposure time in seconds.
+ * @returns {number}
+ */
 function reciprocityStops(t) {
   const model = $('#rec_model').value;
   if (model === 'none' || !isFinite(t) || t <= 0) return 0;
@@ -54,6 +78,11 @@ function reciprocityStops(t) {
   }
 }
 
+/**
+ * Apply global adjustments (filters + reciprocity) to an EV100 value.
+ * @param {number} ev100
+ * @param {number} tSecondsForRecip - Shutter time used when evaluating reciprocity.
+ */
 function applyGlobalStopsToEV(ev100, tSecondsForRecip) {
   const fStops = filterStops();
   const rStops = reciprocityStops(Math.max(tSecondsForRecip, 1e-6));
@@ -61,6 +90,11 @@ function applyGlobalStopsToEV(ev100, tSecondsForRecip) {
 }
 
 // Iterative shutter solve including reciprocity
+/**
+ * Iteratively solve shutter time taking reciprocity into account.
+ *
+ * Reciprocity depends on the shutter time itself, so we refine until the time converges.
+ */
 function tvFromGlobal(N, ev100, maxIter=15, tol=1e-4) {
   let t = tvFrom(N, ev100);
   for (let i=0; i<maxIter; i++) {
@@ -73,22 +107,26 @@ function tvFromGlobal(N, ev100, maxIter=15, tol=1e-4) {
 }
 
 // Aperture solve including reciprocity (uses given t)
+/**
+ * Solve aperture while keeping reciprocity consistent with the provided shutter time.
+ */
 function avFromGlobal(t, ev100) {
   const evEff = applyGlobalStopsToEV(ev100, t);
   return avFrom(t, evEff);
 }
 
 // ===== Utilities =====
-function $(sel){ return document.querySelector(sel); }
-function num(sel){ return parseFloat($(sel).value); }
-function val(sel){ const v = $(sel).value; const n = parseFloat(v); return isNaN(n)? NaN : n; }
-function set(sel,v){ $(sel).value = v; }
-function setIfEmpty(sel,v){ const el=$(sel); if(!el.value) el.value=v; }
-function out(sel, msg){ $(sel).textContent = msg; }
-function fmtTime(t){ if (t >= 1) return `${t.toFixed(3)}s`; const d = Math.round(1/t); return `1/${d}`; }
+const $ = (sel) => document.querySelector(sel);
+const num = (sel) => parseFloat($(sel).value);
+const val = (sel) => { const v = $(sel).value; const n = parseFloat(v); return Number.isNaN(n) ? NaN : n; };
+const set = (sel, v) => { $(sel).value = v; };
+const setIfEmpty = (sel, v) => { const el = $(sel); if (!el.value) el.value = v; };
+const out = (sel, msg) => { $(sel).textContent = msg; };
+const fmtTime = (t) => { if (t >= 1) return `${t.toFixed(3)}s`; const d = Math.round(1/t); return `1/${d}`; };
 
 // ===== Local storage helpers (simple persist/load) =====
 const STORE_KEY = 'exposure-pwa-state-v1';
+/** Persist the current form state in localStorage (lightweight PWA persistence). */
 function saveState() {
   const state = {
     iso: num('#iso'), ap: num('#ap'), tv: num('#tv'), ev: val('#ev'),
@@ -100,6 +138,7 @@ function saveState() {
   };
   localStorage.setItem(STORE_KEY, JSON.stringify(state));
 }
+/** Rehydrate form fields from the saved localStorage snapshot. */
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
@@ -116,6 +155,9 @@ function loadState() {
 }
 
 // ===== Manual =====
+/**
+ * Manual calculator – solve the third exposure variable when any two are known.
+ */
 function solveManual() {
   const ISO = num('#iso');
   const ap = val('#ap');
@@ -159,6 +201,7 @@ function solveManual() {
 }
 
 // ===== Sunny 16 =====
+/** Render a Sunny 16 suggestion based on ISO and scene brightness. */
 function sunny16() {
   const ISO = num('#s16_iso');
   const cond = $('#s16_cond').value;
@@ -171,12 +214,16 @@ function sunny16() {
 }
 
 // ===== ISO Conversion =====
+/**
+ * Convert a shutter speed when ISO changes but aperture stays constant.
+ */
 function convertShutterForISO(N, t, isoA, isoB) {
   const evA100 = ev100From(N, t);
   const evAISO = evISO(evA100, isoA);
   const evB100 = ev100FromISO(evAISO, isoB);
   return tvFromGlobal(N, evB100);
 }
+/** Update the ISO conversion card with the recomputed shutter time. */
 function isoConvert() {
   const isoA = num('#conv_iso_a');
   const isoB = num('#conv_iso_b');
@@ -195,16 +242,19 @@ const zoneEVs = $('#zonebarEVs');
 const zoneRange = $('#zone_ev');
 const zoneNumber = $('#zone_ev_number');
 
+/** Convert an EV value to pixel offset within the zone slider track. */
 function valueToPx(el, val, min, max) {
   const rect = el.getBoundingClientRect(); const w = rect.width;
   const t = (val - min)/(max - min); return t*w;
 }
+/** Convert a pixel coordinate back into an EV value for the zone slider. */
 function pxToValue(el, px, min, max) {
   const rect = el.getBoundingClientRect(); const w = rect.width;
   let t = px / Math.max(1, w); t = Math.min(1, Math.max(0, t));
   return min + t*(max - min);
 }
 
+/** Render EV labels alongside the Zone System slider. */
 function renderZones(ev5) {
   zoneEVs.innerHTML = '';
   for (let z=0; z<=10; z++) {
@@ -217,6 +267,9 @@ function renderZones(ev5) {
   zoneThumb.style.left = `${px}px`;
 }
 
+/**
+ * Propagate Zone V changes into the locked exposure variable (aperture or shutter).
+ */
 function applyZoneExposure(ev5) {
   const ISO = num('#zone_iso');
   const lock = $('#zone_lock').value;
@@ -241,6 +294,7 @@ function syncEVInputs(ev5) {
   zoneRange.value = ev5;
   zoneNumber.value = ev5.toFixed(1);
 }
+/** Initialise range inputs + pointer events for the Zone System slider. */
 function initZoneBar() {
   const startEV = parseFloat(zoneRange.value) || 12;
   syncEVInputs(startEV);
@@ -294,6 +348,9 @@ let mode = 'ap';
 $('#btn_ap_pri').onclick = () => { mode = 'ap'; saveState(); };
 $('#btn_tv_pri').onclick = () => { mode = 'tv'; saveState(); };
 
+/**
+ * Two-up converter: keep the EV constant while changing ISO and a chosen priority.
+ */
 function convertLeftRight() {
   const li = num('#left_iso'), la = num('#left_ap'), lt = num('#left_tv');
   const ri = num('#right_iso');
