@@ -1,425 +1,585 @@
-/**
- * Exposure calculation helpers.
- *
- * The calculator revolves around EV100 (exposure value at ISO 100). Everything else –
- * shutter speed, aperture, ISO conversions – is derived from these logarithmic
- * relationships. Documenting the identities here keeps the rest of the file readable.
- */
-
-/**
- * Calculate log₂ with a small fallback for environments that lack Math.log2 (e.g. very old Android WebViews).
- * @param {number} value
- * @returns {number}
- */
-const log2 = (value) => (Math.log2 ? Math.log2(value) : Math.log(value) / Math.LN2);
-
-// EV100 = log2(N^2 / t)
-function ev100From(N, t){ return log2((N*N)/t); }
-// t = N^2 / 2^EV100
-function tvFrom(N, EV100){ return (N*N)/Math.pow(2, EV100); }
-// N = sqrt(2^EV100 * t)
-function avFrom(t, EV100){ return Math.sqrt(Math.pow(2, EV100) * t); }
-function evISO(ev100, ISO){ return ev100 + log2(ISO/100); }
-function ev100FromISO(evISOval, ISO){ return evISOval - log2(ISO/100); }
-
-// Sunny 16 presets (approx)
-/** Sunny 16 presets (approximate suggested aperture + EV offsets). */
-const s16 = {
-  "Bright Sun": { f: 16, shiftEV: 0 },
-  "Hazy Sun": { f: 16, shiftEV: -0.5 },
-  "Open Shade": { f: 11, shiftEV: -1 },
-  "Heavy Overcast": { f: 8, shiftEV: -2 },
-  "Indoors (bright)": { f: 4, shiftEV: -4 }
+const STORAGE_KEY = 'fsi-expense-state-v1';
+const IRS_RATE = 0.655; // 2023 IRS standard mileage rate per mile.
+const MEAL_LIMITS = {
+  breakfast: 10,
+  lunch: 15,
+  dinner: 25,
 };
 
-// ===== Global Adjustments (Filter & Reciprocity) =====
-/**
- * Resolve the filter correction in stops.
- *
- * Users can enter either a multiplication factor or explicit stop adjustment. Whichever
- * field they edit last is echoed into the other so both remain in sync.
- */
-function filterStops() {
-  const ff = parseFloat($('#ff_factor').value) || 1;
-  const fs = parseFloat($('#ff_stops').value);
-  const calcStops = Math.log2(Math.max(1, ff));
-  const finalStops = isNaN(fs) ? calcStops : fs;
-  $('#ff_stops').value = finalStops.toFixed(2);
-  $('#ff_factor').value = Math.max(1, Math.pow(2, finalStops)).toFixed(2);
-  return finalStops;
-}
+const EXPENSE_TYPES = [
+  { value: 'maintenance_repairs', label: 'Maintenance & Repairs', account: '51020', policy: 'default' },
+  { value: 'parking_storage_cogs', label: 'Parking & Storage - COGS', account: '51070', policy: 'travel', travelDefault: 'parking' },
+  { value: 'vehicle_supplies', label: 'Vehicle Supplies', account: '51090', policy: 'default' },
+  { value: 'state_permits', label: 'State Permits / Fees / Tolls', account: '52030', policy: 'travel', travelDefault: 'other' },
+  { value: 'meals_cogs', label: 'Meals & Entertainment - COGS', account: '52070', policy: 'meal' },
+  { value: 'travel_cogs', label: 'Travel - COGS', account: '52080', policy: 'travel', travelDefault: 'air_domestic' },
+  { value: 'fsi_global_overhead', label: 'FSI Global Overhead', account: '56000', policy: 'default' },
+  { value: 'telephone_ga', label: 'Telephone - GA', account: '62000', policy: 'default' },
+  { value: 'utilities', label: 'Utilities', account: '62070', policy: 'default' },
+  { value: 'it_computer', label: 'IT / Computer', account: '62080', policy: 'default' },
+  { value: 'office_supplies', label: 'Office Supplies', account: '62090', policy: 'default' },
+  { value: 'printing_postage', label: 'Printing & Postage', account: '62100', policy: 'default' },
+  { value: 'meals_ga', label: 'Meals & Entertainment - GA', account: '64180', policy: 'meal' },
+  { value: 'travel_ga', label: 'Travel - GA', account: '64190', policy: 'travel', travelDefault: 'air_domestic' },
+  { value: 'fsi_global_ga', label: 'FSI Global G&A', account: '66500', policy: 'default' },
+  { value: 'mileage', label: 'Mileage reimbursement (IRS rate)', account: '64190', policy: 'mileage' },
+];
 
-/**
- * Calculate reciprocity failure compensation in stops for the selected model.
- * @param {number} t - Exposure time in seconds.
- * @returns {number}
- */
-function reciprocityStops(t) {
-  const model = $('#rec_model').value;
-  if (model === 'none' || !isFinite(t) || t <= 0) return 0;
-  const log10 = x => Math.log10(x);
-  let p1=0, p10=0, p100=0;
-  if (model === 'generic') { p1=0.5; p10=1.5; p100=3.0; }
-  else if (model === 'hp5' || model === 'trix') { p1=1.0; p10=2.0; p100=3.5; }
-  else if (model === 'acros2'){ p1=0.0; p10=0.3; p100=0.5; }
-  else if (model === 'custom') {
-    p1 = parseFloat($('#rec_c1').value)   || 0;
-    p10 = parseFloat($('#rec_c10').value) || p1;
-    p100 = parseFloat($('#rec_c100').value)|| p10;
-  }
-  const tsec = t;
-  if (tsec <= 1) return 0;
-  if (tsec >= 10) {
-    const m = (p100 - p10) / (log10(100)-log10(10));
-    return p10 + m*(log10(Math.min(tsec, 1000)) - log10(10));
-  } else {
-    const m = (p10 - p1) / (log10(10)-log10(1));
-    return p1 + m*(log10(tsec) - log10(1));
-  }
-}
+const DEFAULT_STATE = {
+  header: {
+    name: '',
+    department: '',
+    focus: '',
+    purpose: '',
+    je: '',
+    dates: '',
+    tripLength: '',
+  },
+  expenses: [],
+};
 
-/**
- * Apply global adjustments (filters + reciprocity) to an EV100 value.
- * @param {number} ev100
- * @param {number} tSecondsForRecip - Shutter time used when evaluating reciprocity.
- */
-function applyGlobalStopsToEV(ev100, tSecondsForRecip) {
-  const fStops = filterStops();
-  const rStops = reciprocityStops(Math.max(tSecondsForRecip, 1e-6));
-  return ev100 - (fStops + rStops);
-}
+const cloneDefaultState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
 
-// Iterative shutter solve including reciprocity
-/**
- * Iteratively solve shutter time taking reciprocity into account.
- *
- * Reciprocity depends on the shutter time itself, so we refine until the time converges.
- */
-function tvFromGlobal(N, ev100, maxIter=15, tol=1e-4) {
-  let t = tvFrom(N, ev100);
-  for (let i=0; i<maxIter; i++) {
-    const evEff = applyGlobalStopsToEV(ev100, t);
-    const tNew = tvFrom(N, evEff);
-    if (Math.abs(tNew - t) < tol) return tNew;
-    t = tNew;
-  }
-  return t;
-}
+const headerBindings = {
+  field_name: 'name',
+  field_department: 'department',
+  field_focus: 'focus',
+  field_purpose: 'purpose',
+  field_je: 'je',
+  field_dates: 'dates',
+  field_trip_length: 'tripLength',
+};
 
-// Aperture solve including reciprocity (uses given t)
-/**
- * Solve aperture while keeping reciprocity consistent with the provided shutter time.
- */
-function avFromGlobal(t, ev100) {
-  const evEff = applyGlobalStopsToEV(ev100, t);
-  return avFrom(t, evEff);
-}
+const fmtCurrency = (value) => {
+  const amount = Number.isFinite(value) ? value : 0;
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+};
 
-// ===== Utilities =====
-const $ = (sel) => document.querySelector(sel);
-const num = (sel) => parseFloat($(sel).value);
-const val = (sel) => { const v = $(sel).value; const n = parseFloat(v); return Number.isNaN(n) ? NaN : n; };
-const set = (sel, v) => { $(sel).value = v; };
-const setIfEmpty = (sel, v) => { const el = $(sel); if (!el.value) el.value = v; };
-const out = (sel, msg) => { $(sel).textContent = msg; };
-const fmtTime = (t) => { if (t >= 1) return `${t.toFixed(3)}s`; const d = Math.round(1/t); return `1/${d}`; };
+const parseNumber = (value) => {
+  if (value === '' || value === null || value === undefined) return 0;
+  const num = Number(value);
+  return Number.isNaN(num) ? 0 : num;
+};
 
-// ===== Local storage helpers (simple persist/load) =====
-const STORE_KEY = 'exposure-pwa-state-v1';
-/** Persist the current form state in localStorage (lightweight PWA persistence). */
-function saveState() {
-  const state = {
-    iso: num('#iso'), ap: num('#ap'), tv: num('#tv'), ev: val('#ev'),
-    ff_factor: num('#ff_factor'), ff_stops: num('#ff_stops'), rec_model: $('#rec_model').value,
-    rec_c1: num('#rec_c1'), rec_c10: num('#rec_c10'), rec_c100: num('#rec_c100'),
-    zone_iso: num('#zone_iso'), zone_lock: $('#zone_lock').value, zone_ap: num('#zone_ap'), zone_tv: num('#zone_tv'),
-    zone_ev: num('#zone_ev'), left_iso: num('#left_iso'), left_ap: num('#left_ap'), left_tv: num('#left_tv'),
-    right_iso: num('#right_iso'), right_ap: num('#right_ap'), right_tv: num('#right_tv'),
-  };
-  localStorage.setItem(STORE_KEY, JSON.stringify(state));
-}
-/** Rehydrate form fields from the saved localStorage snapshot. */
-function loadState() {
+const loadState = () => {
   try {
-    const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    const put = (id, v) => { if (v !== undefined && !Number.isNaN(v) && $(id)) $(id).value = v; };
-    put('#iso', s.iso); put('#ap', s.ap); put('#tv', s.tv); put('#ev', s.ev);
-    put('#ff_factor', s.ff_factor); put('#ff_stops', s.ff_stops);
-    if (s.rec_model) $('#rec_model').value = s.rec_model;
-    put('#rec_c1', s.rec_c1); put('#rec_c10', s.rec_c10); put('#rec_c100', s.rec_c100);
-    put('#zone_iso', s.zone_iso); if (s.zone_lock) $('#zone_lock').value = s.zone_lock;
-    put('#zone_ap', s.zone_ap); put('#zone_tv', s.zone_tv); put('#zone_ev', s.zone_ev);
-    put('#left_iso', s.left_iso); put('#left_ap', s.left_ap); put('#left_tv', s.left_tv);
-    put('#right_iso', s.right_iso); put('#right_ap', s.right_ap); put('#right_tv', s.right_tv);
-  } catch {}
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return cloneDefaultState();
+    const parsed = JSON.parse(raw);
+    return {
+      header: { ...DEFAULT_STATE.header, ...(parsed.header || {}) },
+      expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+    };
+  } catch (err) {
+    console.warn('Unable to load saved expense state', err);
+    return cloneDefaultState();
+  }
+};
+
+const saveState = (state) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.warn('Unable to persist expense state', err);
+  }
+};
+
+const uuid = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
+};
+
+const state = loadState();
+const expenseRows = new Map();
+
+const elements = {
+  expensesBody: document.querySelector('#expensesBody'),
+  addExpense: document.querySelector('#addExpense'),
+  reportPreview: document.querySelector('#reportPreview'),
+  copyPreview: document.querySelector('#copyPreview'),
+  copyFeedback: document.querySelector('#copyFeedback'),
+  totalSubmitted: document.querySelector('#totalSubmitted'),
+  totalDueEmployee: document.querySelector('#totalDueEmployee'),
+  totalCompanyCard: document.querySelector('#totalCompanyCard'),
+};
+
+function bindHeaderFields() {
+  Object.entries(headerBindings).forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const value = state.header[key];
+    if (value !== undefined) el.value = value;
+    el.addEventListener('input', () => {
+      let nextValue = el.value;
+      if (el.type === 'number') {
+        nextValue = nextValue === '' ? '' : Number(nextValue);
+      }
+      state.header[key] = nextValue;
+      saveState(state);
+      refreshAllExpenses();
+      updatePreview();
+    });
+  });
 }
 
-// ===== Manual =====
-/**
- * Manual calculator – solve the third exposure variable when any two are known.
- */
-function solveManual() {
-  const ISO = num('#iso');
-  const ap = val('#ap');
-  const tv = val('#tv');
-  const ev = val('#ev');
+const findExpenseType = (value) => EXPENSE_TYPES.find((type) => type.value === value);
 
-  let known = 0;
-  if (!isNaN(ap)) known++;
-  if (!isNaN(tv)) known++;
-  if (!isNaN(ev)) known++;
-  if (known < 2) return out('#manualOut', "Enter any two of: aperture, shutter, EV100.");
+function createOptions(select) {
+  select.innerHTML = '';
+  EXPENSE_TYPES.forEach((type) => {
+    const option = document.createElement('option');
+    option.value = type.value;
+    option.textContent = `${type.label} (${type.account})`;
+    select.append(option);
+  });
+}
 
-  if (!isNaN(ap) && !isNaN(tv)) {
-    const EV100 = ev100From(ap, tv);
-    const EVISO = evISO(EV100, ISO);
-    out('#manualOut', `EV100=${EV100.toFixed(2)} | EV(ISO ${ISO})=${EVISO.toFixed(2)}\nKeeps: f/${ap}, t=${fmtTime(tv)}`);
-    const evEl = $('#ev');
-    let mutated = false;
-    if (evEl && !evEl.value) {
-      evEl.value = EV100.toFixed(2);
-      mutated = true;
+function buildRow(expense) {
+  const template = document.getElementById('expense-row-template');
+  const fragment = template.content.cloneNode(true);
+  const row = fragment.querySelector('tr');
+  row.dataset.id = expense.id;
+
+  const dateInput = row.querySelector('.exp-date');
+  const typeSelect = row.querySelector('.exp-type');
+  const accountCell = row.querySelector('.expense-account');
+  const description = row.querySelector('.exp-description');
+  const paymentSelect = row.querySelector('.exp-payment');
+  const amountInput = row.querySelector('.exp-amount');
+  const reimbCell = row.querySelector('.expense-reimbursable');
+  const messagesList = row.querySelector('.policy-messages');
+  const removeBtn = row.querySelector('.remove-expense');
+  const mealType = row.querySelector('.exp-meal-type');
+  const receipt = row.querySelector('.exp-receipt');
+  const milesInput = row.querySelector('.exp-miles');
+  const mileageRate = row.querySelector('.mileage-rate');
+  const travelCategory = row.querySelector('.exp-travel-cat');
+  const travelClass = row.querySelector('.exp-travel-class');
+  const flightHours = row.querySelector('.exp-flight-hours');
+  const detailBlocks = {
+    meal: row.querySelector('[data-detail="meal"]'),
+    mileage: row.querySelector('[data-detail="mileage"]'),
+    travel: row.querySelector('[data-detail="travel"]'),
+  };
+
+  const flightOnlyBlocks = row.querySelectorAll('[data-flight-only]');
+
+  createOptions(typeSelect);
+
+  dateInput.value = expense.date || '';
+  typeSelect.value = expense.type || EXPENSE_TYPES[0].value;
+  description.value = expense.description || '';
+  paymentSelect.value = expense.payment || 'personal';
+  amountInput.value = expense.amount ?? '';
+  reimbCell.textContent = fmtCurrency(expense.reimbursable || 0);
+  mealType.value = expense.mealType || 'dinner';
+  receipt.checked = expense.hasReceipt !== false;
+  milesInput.value = expense.miles || '';
+  travelCategory.value = expense.travelCategory || 'air_domestic';
+  travelClass.value = expense.travelClass || 'coach';
+  flightHours.value = expense.flightHours || '';
+
+  mileageRate.textContent = `IRS rate $${IRS_RATE.toFixed(3)} per mile`;
+
+  const refs = {
+    row,
+    dateInput,
+    typeSelect,
+    accountCell,
+    description,
+    paymentSelect,
+    amountInput,
+    reimbCell,
+    messagesList,
+    removeBtn,
+    mealType,
+    receipt,
+    milesInput,
+    mileageRate,
+    travelCategory,
+    travelClass,
+    flightHours,
+    detailBlocks,
+    flightOnlyBlocks,
+  };
+
+  expenseRows.set(expense.id, refs);
+
+  typeSelect.addEventListener('change', () => {
+    expense.type = typeSelect.value;
+    applyExpenseType(expense, refs);
+    persistAndRefresh(expense);
+  });
+
+  dateInput.addEventListener('change', () => {
+    expense.date = dateInput.value;
+    persistAndRefresh(expense);
+  });
+
+  description.addEventListener('input', () => {
+    expense.description = description.value;
+    persistAndRefresh(expense, { previewOnly: true });
+  });
+
+  paymentSelect.addEventListener('change', () => {
+    expense.payment = paymentSelect.value;
+    persistAndRefresh(expense);
+  });
+
+  amountInput.addEventListener('input', () => {
+    if (expense.policy === 'mileage') return;
+    expense.amount = parseNumber(amountInput.value);
+    persistAndRefresh(expense);
+  });
+
+  mealType.addEventListener('change', () => {
+    expense.mealType = mealType.value;
+    persistAndRefresh(expense);
+  });
+
+  receipt.addEventListener('change', () => {
+    expense.hasReceipt = receipt.checked;
+    persistAndRefresh(expense);
+  });
+
+  milesInput.addEventListener('input', () => {
+    expense.miles = parseNumber(milesInput.value);
+    expense.amount = expense.miles * IRS_RATE;
+    amountInput.value = expense.amount ? expense.amount.toFixed(2) : '';
+    persistAndRefresh(expense);
+  });
+
+  travelCategory.addEventListener('change', () => {
+    expense.travelCategory = travelCategory.value;
+    updateFlightFieldsVisibility(expense, refs);
+    persistAndRefresh(expense);
+  });
+
+  travelClass.addEventListener('change', () => {
+    expense.travelClass = travelClass.value;
+    persistAndRefresh(expense);
+  });
+
+  flightHours.addEventListener('input', () => {
+    expense.flightHours = flightHours.value;
+    persistAndRefresh(expense);
+  });
+
+  removeBtn.addEventListener('click', () => {
+    removeExpense(expense.id);
+  });
+
+  applyExpenseType(expense, refs);
+  return row;
+}
+
+function updateFlightFieldsVisibility(expense, refs) {
+  const isAir = expense.travelCategory === 'air_domestic' || expense.travelCategory === 'air_international';
+  refs.flightOnlyBlocks.forEach((block) => {
+    block.style.display = isAir ? '' : 'none';
+  });
+}
+
+function applyExpenseType(expense, refs) {
+  const meta = findExpenseType(expense.type) || EXPENSE_TYPES[0];
+  expense.policy = meta.policy;
+  expense.account = meta.account;
+  refs.accountCell.textContent = meta.account;
+
+  Object.entries(refs.detailBlocks).forEach(([key, block]) => {
+    if (!block) return;
+    block.hidden = meta.policy !== key;
+  });
+
+  if (meta.policy !== 'mileage') {
+    refs.amountInput.removeAttribute('readonly');
+    refs.amountInput.classList.remove('readonly');
+  }
+
+  if (meta.policy === 'mileage') {
+    refs.amountInput.setAttribute('readonly', 'readonly');
+    refs.amountInput.classList.add('readonly');
+    if (!expense.miles) expense.miles = 0;
+    refs.milesInput.value = expense.miles || '';
+    expense.amount = expense.miles * IRS_RATE;
+    refs.amountInput.value = expense.amount ? expense.amount.toFixed(2) : '';
+  }
+
+  if (meta.policy !== 'meal') {
+    expense.mealType = expense.mealType || 'dinner';
+  }
+
+  if (meta.policy === 'travel') {
+    const defaultCategory = meta.travelDefault || 'air_domestic';
+    expense.travelCategory = expense.travelCategory || defaultCategory;
+    refs.travelCategory.value = expense.travelCategory;
+    updateFlightFieldsVisibility(expense, refs);
+  }
+
+  persistAndRefresh(expense, { previewOnly: false });
+}
+
+function persistAndRefresh(expense, { previewOnly = false } = {}) {
+  evaluateExpense(expense);
+  const index = state.expenses.findIndex((item) => item.id === expense.id);
+  if (index !== -1) {
+    state.expenses[index] = { ...state.expenses[index], ...expense };
+  }
+  saveState(state);
+  updateRowUI(expense);
+  if (!previewOnly) {
+    updateTotals();
+  }
+  updatePreview();
+}
+
+function evaluateExpense(expense) {
+  const messages = [];
+  let reimbursable = parseNumber(expense.amount);
+  const policy = expense.policy;
+
+  if (policy === 'meal') {
+    const mealKey = expense.mealType || 'dinner';
+    const cap = MEAL_LIMITS[mealKey];
+    if (!expense.hasReceipt) {
+      if (reimbursable > cap) {
+        messages.push({ type: 'warning', text: `No receipt: reimbursement capped at ${fmtCurrency(cap)} for ${mealKey}.` });
+      }
+      reimbursable = Math.min(reimbursable, cap);
+    } else if (cap && reimbursable > cap) {
+      messages.push({ type: 'info', text: `Above guideline amount (${fmtCurrency(cap)}). Ensure business justification is noted.` });
     }
-    if (mutated) saveState();
+  }
+
+  if (policy === 'mileage') {
+    reimbursable = (parseNumber(expense.miles)) * IRS_RATE;
+    expense.amount = reimbursable;
+  }
+
+  if (policy === 'travel') {
+    const category = expense.travelCategory || 'air_domestic';
+    const travelClass = expense.travelClass || 'coach';
+    const hours = parseNumber(expense.flightHours);
+    if (category === 'air_domestic') {
+      if (travelClass === 'first') {
+        messages.push({ type: 'warning', text: 'First-class airfare is not reimbursable.' });
+      } else if (travelClass !== 'coach') {
+        messages.push({ type: 'warning', text: 'Domestic airfare should be booked in coach. Upgrades are personal expense.' });
+      }
+    }
+    if (category === 'air_international') {
+      if (travelClass === 'first') {
+        messages.push({ type: 'warning', text: 'First-class airfare is not reimbursable.' });
+      }
+      if (travelClass === 'business' && hours < 8) {
+        messages.push({ type: 'warning', text: 'Business class allowed only when published flight time is eight hours or longer.' });
+      }
+      if (travelClass !== 'business' && travelClass !== 'coach' && travelClass !== 'premium') {
+        messages.push({ type: 'warning', text: 'Select an allowable fare class.' });
+      }
+    }
+    if (category === 'gym' && reimbursable > 15) {
+      messages.push({ type: 'warning', text: 'Hotel gym fees should not exceed $15 per day.' });
+    }
+    if (category === 'laundry') {
+      const tripLength = parseNumber(state.header.tripLength);
+      if (!tripLength || tripLength < 7) {
+        messages.push({ type: 'warning', text: 'Laundry reimbursed only for trips exceeding seven full days.' });
+      }
+    }
+  }
+
+  expense.reimbursable = reimbursable;
+  expense.messages = messages;
+  return expense;
+}
+
+function updateRowUI(expense) {
+  const refs = expenseRows.get(expense.id);
+  if (!refs) return;
+  refs.reimbCell.textContent = fmtCurrency(expense.reimbursable || 0);
+  if (expense.policy === 'mileage') {
+    refs.amountInput.value = expense.amount ? expense.amount.toFixed(2) : '';
+  }
+  refs.messagesList.innerHTML = '';
+  if (expense.messages && expense.messages.length) {
+    expense.messages.forEach((message) => {
+      const li = document.createElement('li');
+      li.textContent = message.text;
+      li.className = message.type;
+      refs.messagesList.appendChild(li);
+    });
+  }
+}
+
+function updateTotals() {
+  const totals = state.expenses.reduce((acc, expense) => {
+    const amount = parseNumber(expense.amount);
+    const reimb = parseNumber(expense.reimbursable);
+    acc.submitted += amount;
+    if (expense.payment === 'company') {
+      acc.company += reimb;
+    } else {
+      acc.employee += reimb;
+    }
+    return acc;
+  }, { submitted: 0, employee: 0, company: 0 });
+
+  elements.totalSubmitted.textContent = fmtCurrency(totals.submitted);
+  elements.totalDueEmployee.textContent = fmtCurrency(totals.employee);
+  elements.totalCompanyCard.textContent = fmtCurrency(totals.company);
+}
+
+function updatePreview() {
+  const lines = [];
+  const header = state.header;
+  lines.push('Expense report');
+  lines.push(`Name: ${header.name || ''}`);
+  lines.push(`Department: ${header.department || ''}`);
+  lines.push(`Expense focus: ${header.focus || ''}`);
+  lines.push(`Purpose: ${header.purpose || ''}`);
+  lines.push(`JE #: ${header.je || ''}`);
+  lines.push(`Dates: ${header.dates || ''}`);
+  if (header.tripLength) {
+    lines.push(`Trip length: ${header.tripLength} day(s)`);
+  }
+  lines.push('');
+  lines.push('Date | Type | Account | Description | Payment | Amount | Reimbursable');
+  lines.push('-----|------|---------|-------------|---------|--------|-------------');
+  state.expenses.forEach((expense) => {
+    const meta = findExpenseType(expense.type);
+    const typeLabel = meta ? meta.label : expense.type;
+    const amount = fmtCurrency(parseNumber(expense.amount));
+    const reimb = fmtCurrency(parseNumber(expense.reimbursable));
+    lines.push([
+      expense.date || '',
+      typeLabel,
+      expense.account || '',
+      (expense.description || '').replace(/\s+/g, ' ').trim(),
+      expense.payment === 'company' ? 'Company card' : 'Personal',
+      amount,
+      reimb,
+    ].join(' | '));
+    if (expense.messages && expense.messages.length) {
+      expense.messages.forEach((msg) => {
+        lines.push(`  - ${msg.type === 'warning' ? '⚠️' : 'ℹ️'} ${msg.text}`);
+      });
+    }
+  });
+
+  const totalsLine = `Totals -> Submitted: ${elements.totalSubmitted.textContent}, Due to employee: ${elements.totalDueEmployee.textContent}, Company card: ${elements.totalCompanyCard.textContent}`;
+  lines.push('');
+  lines.push(totalsLine);
+
+  elements.reportPreview.value = lines.join('\n');
+}
+
+async function copyPreview() {
+  if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+    elements.copyFeedback.textContent = 'Clipboard unavailable. Select the text and copy manually.';
+    setTimeout(() => { elements.copyFeedback.textContent = ''; }, 3000);
     return;
   }
-
-  if (!isNaN(ev)) {
-    const EV100 = ev;
-    if (!isNaN(ap) && isNaN(tv)) {
-      const t = tvFromGlobal(ap, EV100);
-      const tvEl = $('#tv');
-      let mutated = false;
-      if (tvEl) {
-        const newValue = `${t}`;
-        if (tvEl.value !== newValue) {
-          tvEl.value = newValue;
-          mutated = true;
-        }
-      }
-      const EVISO = evISO(EV100, ISO);
-      out('#manualOut', `Solved t=${fmtTime(t)} | EV(ISO ${ISO})=${EVISO.toFixed(2)}`);
-      if (mutated) saveState();
-      return;
-    }
-    if (isNaN(ap) && !isNaN(tv)) {
-      const N = avFromGlobal(tv, EV100);
-      const apEl = $('#ap');
-      let mutated = false;
-      if (apEl) {
-        const newValue = `${N}`;
-        if (apEl.value !== newValue) {
-          apEl.value = newValue;
-          mutated = true;
-        }
-      }
-      const EVISO = evISO(EV100, ISO);
-      out('#manualOut', `Solved f/${N.toFixed(2)} | EV(ISO ${ISO})=${EVISO.toFixed(2)}`);
-      if (mutated) saveState();
-      return;
-    }
+  try {
+    await navigator.clipboard.writeText(elements.reportPreview.value);
+    elements.copyFeedback.textContent = 'Copied to clipboard!';
+  } catch (err) {
+    elements.copyFeedback.textContent = 'Unable to copy automatically. Select and copy manually.';
   }
-
-  out('#manualOut', "Ambiguous inputs — clear one field and try again.");
-  saveState();
+  setTimeout(() => { elements.copyFeedback.textContent = ''; }, 3000);
 }
 
-// ===== Sunny 16 =====
-/** Render a Sunny 16 suggestion based on ISO and scene brightness. */
-function sunny16() {
-  const ISO = num('#s16_iso');
-  const cond = $('#s16_cond').value;
-  const base = s16[cond] || s16["Bright Sun"];
-  const tBase = 1 / ISO;
-  const evBase = ev100From(16, tBase) + base.shiftEV;
-  const suggestedT = tvFromGlobal(base.f, evBase);
-  out('#s16Out', `Suggested: f/${base.f}, t≈${fmtTime(suggestedT)}  (EV100≈${evBase.toFixed(1)})`);
-  saveState();
-}
-
-// ===== ISO Conversion =====
-/**
- * Convert a shutter speed when ISO changes but aperture stays constant.
- */
-function convertShutterForISO(N, t, isoA, isoB) {
-  const evA100 = ev100From(N, t);
-  const evAISO = evISO(evA100, isoA);
-  const evB100 = ev100FromISO(evAISO, isoB);
-  return tvFromGlobal(N, evB100);
-}
-/** Update the ISO conversion card with the recomputed shutter time. */
-function isoConvert() {
-  const isoA = num('#conv_iso_a');
-  const isoB = num('#conv_iso_b');
-  const ap = num('#conv_ap');
-  const tv = num('#conv_tv');
-  const t2 = convertShutterForISO(ap, tv, isoA, isoB);
-  out('#convOut', `Keep f/${ap} → new shutter at ISO ${isoB}: ${fmtTime(t2)}`);
-  saveState();
-}
-
-// ===== Zone System (draggable Zone V) =====
-const ZONE_MIN = 3, ZONE_MAX = 18;
-const zoneThumb = $('#zoneThumb');
-const zoneTrack = $('#zonebarTrack');
-const zoneEVs = $('#zonebarEVs');
-const zoneRange = $('#zone_ev');
-const zoneNumber = $('#zone_ev_number');
-
-/** Convert an EV value to pixel offset within the zone slider track. */
-function valueToPx(el, val, min, max) {
-  const rect = el.getBoundingClientRect(); const w = rect.width;
-  const t = (val - min)/(max - min); return t*w;
-}
-/** Convert a pixel coordinate back into an EV value for the zone slider. */
-function pxToValue(el, px, min, max) {
-  const rect = el.getBoundingClientRect(); const w = rect.width;
-  let t = px / Math.max(1, w); t = Math.min(1, Math.max(0, t));
-  return min + t*(max - min);
-}
-
-/** Render EV labels alongside the Zone System slider. */
-function renderZones(ev5) {
-  zoneEVs.innerHTML = '';
-  for (let z=0; z<=10; z++) {
-    const evZ = ev5 + (z - 5);
-    const div = document.createElement('div');
-    div.textContent = `EV ${evZ.toFixed(1)}`;
-    zoneEVs.appendChild(div);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    updateTotals();
+    updatePreview();
   }
-  const px = valueToPx(zoneTrack, ev5, ZONE_MIN, ZONE_MAX);
-  zoneThumb.style.left = `${px}px`;
-}
+});
 
-/**
- * Propagate Zone V changes into the locked exposure variable (aperture or shutter).
- */
-function applyZoneExposure(ev5) {
-  const ISO = num('#zone_iso');
-  const lock = $('#zone_lock').value;
-  let ap = num('#zone_ap');
-  let tv = num('#zone_tv');
-
-  if (lock === 'ap') {
-    const t = tvFromGlobal(ap, ev5);
-    tv = t; set('#zone_tv', t);
-  } else {
-    const N = avFromGlobal(tv, ev5);
-    ap = N; set('#zone_ap', N);
-  }
-
-  const EVISO = evISO(ev5, ISO);
-  out('#zoneOut', `Zone V → EV100=${ev5.toFixed(2)} | EV(ISO ${ISO})=${EVISO.toFixed(2)} | f/${ap.toFixed(2)} @ ${fmtTime(tv)}`);
-  renderZones(ev5);
-  saveState();
-}
-
-function syncEVInputs(ev5) {
-  zoneRange.value = ev5;
-  zoneNumber.value = ev5.toFixed(1);
-}
-/** Initialise range inputs + pointer events for the Zone System slider. */
-function initZoneBar() {
-  const startEV = parseFloat(zoneRange.value) || 12;
-  syncEVInputs(startEV);
-  renderZones(startEV);
-  applyZoneExposure(startEV);
-
-  zoneNumber.oninput = () => {
-    let v = parseFloat(zoneNumber.value); if (isNaN(v)) return;
-    v = Math.max(ZONE_MIN, Math.min(ZONE_MAX, v));
-    syncEVInputs(v); applyZoneExposure(v);
-  };
-  zoneRange.oninput = () => {
-    const v = parseFloat(zoneRange.value);
-    syncEVInputs(v); applyZoneExposure(v);
-  };
-
-  $('#zone_lock').onchange = () => applyZoneExposure(num('#zone_ev'));
-  $('#zone_ap').oninput = () => applyZoneExposure(num('#zone_ev'));
-  $('#zone_tv').oninput = () => applyZoneExposure(num('#zone_ev'));
-  $('#zone_iso').oninput = () => applyZoneExposure(num('#zone_ev'));
-
-  let dragging = false;
-  const onPointerDown = (e) => {
-    dragging = true;
-    if (zoneThumb.setPointerCapture) {
-      zoneThumb.setPointerCapture(e.pointerId);
-    }
-  };
-  const onPointerMove = (e) => {
-    if (!dragging) return;
-    const rect = zoneTrack.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const ev5 = pxToValue(zoneTrack, x, ZONE_MIN, ZONE_MAX);
-    syncEVInputs(ev5); applyZoneExposure(ev5);
-  };
-  const onPointerUp = () => { dragging = false; };
-
-  zoneThumb.addEventListener('pointerdown', onPointerDown);
-  zoneTrack.addEventListener('pointerdown', (e) => {
-    const rect = zoneTrack.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const ev5 = pxToValue(zoneTrack, x, ZONE_MIN, ZONE_MAX);
-    syncEVInputs(ev5); applyZoneExposure(ev5);
+function refreshAllExpenses() {
+  state.expenses.forEach((expense) => {
+    evaluateExpense(expense);
+    updateRowUI(expense);
   });
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp);
+  updateTotals();
+  updatePreview();
 }
 
-// ===== Converter (left → right) =====
-let mode = 'ap';
-$('#btn_ap_pri').onclick = () => { mode = 'ap'; saveState(); };
-$('#btn_tv_pri').onclick = () => { mode = 'tv'; saveState(); };
+function addExpense(initial = {}) {
+  const expense = {
+    id: uuid(),
+    date: '',
+    type: EXPENSE_TYPES[0].value,
+    account: EXPENSE_TYPES[0].account,
+    description: '',
+    payment: 'personal',
+    amount: 0,
+    reimbursable: 0,
+    hasReceipt: true,
+    mealType: 'dinner',
+    miles: 0,
+    travelCategory: 'air_domestic',
+    travelClass: 'coach',
+    flightHours: '',
+    ...initial,
+  };
+  state.expenses.push(expense);
+  const row = buildRow(expense);
+  elements.expensesBody.appendChild(row);
+  evaluateExpense(expense);
+  updateRowUI(expense);
+  updateTotals();
+  updatePreview();
+  saveState(state);
+}
 
-/**
- * Two-up converter: keep the EV constant while changing ISO and a chosen priority.
- */
-function convertLeftRight() {
-  const li = num('#left_iso'), la = num('#left_ap'), lt = num('#left_tv');
-  const ri = num('#right_iso');
-  let ra = num('#right_ap'), rt = num('#right_tv');
-
-  const EVL100 = ev100From(la, lt);
-  const EVLISO = evISO(EVL100, li);
-  const EVR100 = ev100FromISO(EVLISO, ri);
-
-  if (mode === 'ap') {
-    const t = tvFromGlobal(ra, EVR100);
-    set('#right_tv', t);
-    out('#conv2Out', `Right (Aperture Priority): f/${ra}, t=${fmtTime(t)} (same EV)`);
-  } else {
-    const N = avFromGlobal(rt, EVR100);
-    set('#right_ap', N);
-    out('#conv2Out', `Right (Shutter Priority): f/${N.toFixed(2)}, t=${fmtTime(rt)} (same EV)`);
+function removeExpense(id) {
+  const index = state.expenses.findIndex((expense) => expense.id === id);
+  if (index === -1) return;
+  state.expenses.splice(index, 1);
+  const refs = expenseRows.get(id);
+  if (refs) {
+    refs.row.remove();
+    expenseRows.delete(id);
   }
-  saveState();
+  updateTotals();
+  updatePreview();
+  saveState(state);
 }
 
-// ===== ISO for live meter helper =====
-window.readISO = function readISO(){
-  const isoNode = document.querySelector('#iso, #zone_iso, #left_iso') || { value: '100' };
-  return parseFloat(isoNode.value) || 100;
-};
-// Global EV injection (used by live meter module if enabled)
-window.setGlobalEV100 = function setGlobalEV100(ev){
-  // Set Zone V EV slider/number and recalc
-  syncEVInputs(ev);
-  applyZoneExposure(ev);
-};
-
-// ===== Wire up =====
-loadState();
-document.querySelectorAll('input,select').forEach(el => el.addEventListener('change', saveState));
-$('#solveManual').onclick = solveManual;
-$('#s16_calc').onclick = sunny16;
-$('#conv_calc').onclick = isoConvert;
-$('#convert').onclick = convertLeftRight;
-initZoneBar();
-
-// ===== PWA service worker =====
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js');
+function restoreExpenses() {
+  if (!state.expenses.length) {
+    addExpense();
+    return;
+  }
+  state.expenses.forEach((expense) => {
+    if (!expense.id) expense.id = uuid();
+    const row = buildRow(expense);
+    elements.expensesBody.appendChild(row);
+    evaluateExpense(expense);
+    updateRowUI(expense);
+  });
+  updateTotals();
+  updatePreview();
 }
 
-export { solveManual, saveState };
+function initCopyButton() {
+  if (!elements.copyPreview) return;
+  elements.copyPreview.addEventListener('click', copyPreview);
+}
+
+function initAddButton() {
+  if (!elements.addExpense) return;
+  elements.addExpense.addEventListener('click', () => addExpense());
+}
+
+function init() {
+  bindHeaderFields();
+  restoreExpenses();
+  initAddButton();
+  initCopyButton();
+}
+
+init();
